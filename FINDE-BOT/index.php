@@ -35,6 +35,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $capabilities->setCapability(ChromeOptions::CAPABILITY, $options);
 
         $driver = RemoteWebDriver::create($host, $capabilities);
+        $wait = new WebDriverWait($driver, 30);
 
         $driver->get('https://login.salesforce.com/?locale=mx');
         $driver->executeScript('window.localStorage.clear();');
@@ -46,14 +47,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         try {
 
-            $_SESSION['loggedin'] = true;
-            ini_set('memory_limit', '512M');
+            sleep(30);
 
-            sleep(20); // Reducido de 3 a 2
+            try {
+                $utilityButton = $driver->findElement(
+                    WebDriverBy::xpath("//span[contains(text(), 'OmniCanal') and contains(text(), 'Sin conexión')]/parent::button")
+                );
+                if ($utilityButton->isDisplayed()) {
+                    $utilityButton->click();
+                    sleep(2);
+                }
+            } catch (Exception $e) {
+                echo "No se encontró el boton OmniCanal (Sin conexión): " . $e->getMessage() . "\n";
+            }
+
+            try {
+                $specificButton = $driver->findElement(
+                    WebDriverBy::xpath("//button[@tabindex='0' and @aria-expanded='false' and @aria-haspopup='true']")
+                );
+                if ($specificButton->isDisplayed()) {
+                    $specificButton->click();
+                    sleep(2);
+                }
+            } catch (Exception $e) {
+                echo "No se encontró button deslizable: " . $e->getMessage() . "\n";
+            }
+
+            try {
+            $multiSkillElement = $wait->until(
+                WebDriverExpectedCondition::elementToBeClickable(
+                    WebDriverBy::xpath("//span[contains(text(), 'Multi skill Disponible Hogares')]")
+                )
+            );
+                $multiSkillElement->click();
+                sleep(2);
+            } catch (Exception $e) {
+                echo "No se encontró 'Multi skill Disponible Hogares': " . $e->getMessage() . "\n";
+            }
+
+            sleep(30);
 
             } catch (TimeoutException | NoSuchElementException $e) {
                 
-                echo "<script>alert('Error: {$e->getMessage()}');</script>";
+                echo "<script>alert('Error: Tiempo excedido');</script>";
                 $driver->quit();
                 
             }finally {
@@ -109,12 +145,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     <div>
                         <img src="View/images/icons/email.png" alt="Icono de correo electrónico">
-                        <input type="text" id="validationCustomUsername" name="username" placeholder="Usuario_Salesforce" required>
+                        <input type="text" id="validationCustomUsername" name="username" placeholder="Usuario_Salesforce" value="sergio.peraltab@etb.com.co" required>
                     </div>
 
                     <div>
                         <img src="View/images/icons/pass.png" alt="Icono de contraseña">
-                        <input type="password" id="dz-password" name="password" placeholder="Contraseña_Salesforce" required>
+                        <input type="password" id="dz-password" name="password" placeholder="Contraseña_Salesforce" value="Colombia27" required>
                     </div>
 
                     <div class="buttons-act">
