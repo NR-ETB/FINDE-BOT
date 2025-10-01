@@ -1,0 +1,2 @@
+Mensaje,Asunto,Descripcion
+¡Hola! 🩵 Queremos brindarte la mejor atención. Nuestro equipo especializado está disponible de lunes a viernes, de 8:00 a.m. a 6:00 p.m. Te invitamos a comunicarte dentro de este horario para poder atenderte de la mejor manera,Fuera de Horario,Comunicacion fuera de horario
