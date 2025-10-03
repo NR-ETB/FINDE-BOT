@@ -37,39 +37,70 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $driver = RemoteWebDriver::create($host, $capabilities);
         $wait = new WebDriverWait($driver, 30);
 
-        $driver->get('https://login.salesforce.com/?locale=mx');
-        $driver->executeScript('window.localStorage.clear();');
-        $driver->executeScript('window.sessionStorage.clear();');
-
-        $driver->findElement(WebDriverBy::name('username'))->sendKeys($username);
-        $driver->findElement(WebDriverBy::name('pw'))->sendKeys($password);
-        $driver->findElement(WebDriverBy::id('Login'))->click();
-
-        $archivo = 'View/tip_Finde/process.txt';
-        $gestor = fopen($archivo, 'r');
-        if (!$gestor) die("No se pudo abrir el archivo 'process.txt'.\n");
-
-        $filePath = 'View/tip_Finde/Gestiones_Realizadas.csv';
-        $fileExists2 = file_exists($filePath);
-        $file = fopen($filePath, 'a');
-        if (!$file) die("No se pudo abrir o crear el archivo CSV.\n");
-
-        if (!$fileExists2) {
-            fputcsv($file, [
-                'Espacio1','Espacio2'
-            ]);
-        }
-
         try {
+            // ==========================================
+            // SECCIÓN: LOGIN A SALESFORCE
+            // ==========================================
+            
+            $driver->get('https://login.salesforce.com/?locale=mx');
+            $driver->executeScript('window.localStorage.clear();');
+            $driver->executeScript('window.sessionStorage.clear();');
 
+            $driver->findElement(WebDriverBy::name('username'))->sendKeys($username);
+            $driver->findElement(WebDriverBy::name('pw'))->sendKeys($password);
+            $driver->findElement(WebDriverBy::id('Login'))->click();
+
+            // ==========================================
+            // SECCIÓN: CONFIGURACIÓN DE ARCHIVOS
+            // ==========================================
+            
+            // Archivo de control de procesos
+            $archivo = 'View/tip_Finde/process.txt';
+            $gestor = fopen($archivo, 'r');
+            if (!$gestor) {
+                die("No se pudo abrir el archivo 'process.txt'.\n");
+            }
+            fclose($gestor);
+
+            // ==========================================
+            // SECCIÓN: CARGAR MENSAJES PREDEFINIDOS
+            // ==========================================
+            
+            $csvMensajes = 'View/tip_Finde/process.txt';
+            $mensajesData = [];
+
+            if (file_exists($csvMensajes)) {
+                $csvFile = fopen($csvMensajes, 'r');
+                $headers = fgetcsv($csvFile);
+                
+                while (($row = fgetcsv($csvFile)) !== false) {
+                    $mensajesData[] = [
+                        'Mensaje' => $row[0],
+                        'Estado' => $row[1],
+                        'Asunto' => $row[2],
+                        'Descripcion' => $row[3]
+                    ];
+                }
+                fclose($csvFile);
+                echo "Mensajes cargados: " . count($mensajesData) . " registros\n";
+            } else {
+                die("No se encontró el archivo mensajes.csv\n");
+            }
+
+            // Esperar a que Salesforce cargue completamente después del login
             sleep(30);
 
+            // ==========================================
+            // SECCIÓN: CONFIGURACIÓN OMNICANAL
+            // ==========================================
+            
             try {
                 $utilityButton = $driver->findElement(
                     WebDriverBy::xpath("//span[contains(text(), 'OmniCanal') and contains(text(), 'Sin conexión')]/parent::button")
                 );
                 if ($utilityButton->isDisplayed()) {
                     $utilityButton->click();
+                    echo "Boton OmniCanal clickeado\n";
                     sleep(2);
                 }
             } catch (Exception $e) {
@@ -77,218 +108,279 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             try {
+                // Opción 1: Buscar específicamente en el área de OmniCanal/utility bar
                 $specificButton = $driver->findElement(
-                    WebDriverBy::xpath("//button[@tabindex='0' and @aria-expanded='false' and @aria-haspopup='true']")
+                    WebDriverBy::xpath("//div[contains(@class, 'utilityBar')]//button[.//svg[@data-key='down']]")
                 );
+                
                 if ($specificButton->isDisplayed()) {
                     $specificButton->click();
+                    echo "Boton desplegable clickeado\n";
                     sleep(2);
                 }
             } catch (Exception $e) {
-                echo "No se encontró button deslizable: " . $e->getMessage() . "\n";
+                // Opción 2: Si la primera falla, buscar por el tabindex que viste antes
+                try {
+                    $specificButton = $driver->findElement(
+                        WebDriverBy::xpath("//button[@tabindex='0'][@aria-expanded='false'][.//svg[@data-key='down']]")
+                    );
+                    
+                    if ($specificButton->isDisplayed()) {
+                        $specificButton->click();
+                        echo "Boton desplegable clickeado\n";
+                        sleep(2);
+                    }
+                } catch (Exception $e2) {
+                    echo "No se encontró button deslizable: " . $e2->getMessage() . "\n";
+                }
             }
 
             try {
-            $multiSkillElement = $wait->until(
-                WebDriverExpectedCondition::elementToBeClickable(
-                    WebDriverBy::xpath("//span[contains(text(), 'Multi skill Disponible Hogares')]")
-                )
-            );
+                $multiSkillElement = $wait->until(
+                    WebDriverExpectedCondition::elementToBeClickable(
+                        WebDriverBy::xpath("//span[contains(text(), 'Multi skill Disponible Hogares')]")
+                    )
+                );
                 $multiSkillElement->click();
+                echo "Multi skill Disponible Hogares seleccionado\n";
                 sleep(2);
             } catch (Exception $e) {
                 echo "No se encontró 'Multi skill Disponible Hogares': " . $e->getMessage() . "\n";
             }
 
             // ==========================================
-    // BUCLE PRINCIPAL: MONITOREO CONTINUO DE CHATS
-    // ==========================================
+            // BUCLE PRINCIPAL: MONITOREO CONTINUO DE CHATS
+            // ==========================================
 
-    $chatProcessingActive = true;
-    $waitInterval = 5; // Intervalo de verificación en segundos
+            $chatProcessingActive = true;
+            $waitInterval = 5;
 
-    echo "🔄 Iniciando monitoreo continuo de chats entrantes...\n";
+            echo "Iniciando monitoreo continuo de chats entrantes...\n";
 
-    while ($chatProcessingActive) {
-        try {
-            // Intentar localizar un chat disponible en la consola
-            $specificChat = $driver->findElement(
-                WebDriverBy::xpath("//li[@role='presentation' and contains(@class, 'navexConsoleTabItem')]")
-            );
-            
-            if ($specificChat->isDisplayed()) {
-                echo "📥 Chat encontrado! Iniciando procesamiento...\n";
-                
-                // Hacer clic en el chat para abrirlo
-                $specificChat->click();
-                sleep(2);
-                
-                // ==========================================
-                // SECCIÓN: COMPOSICIÓN Y ENVÍO DEL MENSAJE
-                // ==========================================
-                
+            while ($chatProcessingActive) {
+
                 try {
-                    $newMessage = $driver->findElement(
-                        WebDriverBy::xpath("//textarea[@class='slds-textarea messaging-textarea']")
+                    // Intentar localizar un chat disponible en la consola
+                    $specificChat = $driver->findElement(
+                        WebDriverBy::xpath("//li[@role='presentation' and contains(@class, 'navexConsoleTabItem')]")
                     );
                     
-                    if ($newMessage->isDisplayed()) {
-                        $newMessage->click();
-                        sleep(1);
-                        $newMessage->clear();
-                        $newMessage->sendKeys($mensajesData[0]['Mensaje']);
-                        sleep(2);
-                    }
-                } catch (Exception $e) {
-                    echo "No se encontró el campo de escritura: " . $e->getMessage() . "\n";
-                }
+                    if ($specificChat->isDisplayed()) {
+                        echo "Chat encontrado! Iniciando procesamiento...\n";
+                        
+                        // Hacer clic en el chat para abrirlo
+                        $specificChat->click();
+                        sleep(3);
+                        
+                        // ==========================================
+                        // SECCIÓN: COMPOSICIÓN Y ENVÍO DEL MENSAJE
+                        // ==========================================
 
-                try {
-                    $sendButton = $driver->findElement(
-                        WebDriverBy::xpath("//button[@aria-label='Enviar' and contains(@class, 'slds-button')]")
-                    );
+                        try {
+                            // Verificar si el textarea del mensaje existe y está habilitado
+                            $textareaFound = false;
+                            $textareaEnabled = false;
+                            $newMessage = null;
+                            
+                            try {
+                                // Buscar el textarea SIN la condición not(@disabled) primero
+                                $newMessage = $driver->findElement(
+                                    WebDriverBy::xpath("//textarea[@class='slds-textarea messaging-textarea']")
+                                );
+                                $textareaFound = true;
+                                
+                                // Verificar explícitamente si está habilitado
+                                $isDisabled = $newMessage->getAttribute('disabled');
+                                $textareaEnabled = ($isDisabled === null || $isDisabled === false) && $newMessage->isEnabled();
+                                
+                                if (!$textareaEnabled) {
+                                    echo "Textarea encontrado pero está deshabilitado\n";
+                                }
+                                
+                            } catch (NoSuchElementException $e) {
+                                echo "Textarea no encontrado, pasando a tipificación directamente\n";
+                            }
+                            
+                            // Solo intentar escribir si el textarea está habilitado
+                            if ($textareaFound && $textareaEnabled) {
+                                echo "Textarea habilitado, escribiendo mensaje...\n";
+                                
+                                // Scroll al elemento para asegurarse que esté visible
+                                $driver->executeScript("arguments[0].scrollIntoView(true);", [$newMessage]);
+                                sleep(1);
+                                
+                                // Click con JavaScript para evitar conflictos
+                                $driver->executeScript("arguments[0].click();", [$newMessage]);
+                                sleep(1);
+                                
+                                $newMessage->clear();
+                                $newMessage->sendKeys($mensajesData[0]['Mensaje']);
+                                echo "Mensaje escrito en el campo\n";
+                                sleep(2);
+                                
+                                // Enviar el mensaje
+                                try {
+                                    $sendButton = $driver->findElement(
+                                        WebDriverBy::xpath("//button[@aria-label='Enviar' and contains(@class, 'slds-button')]")
+                                    );
+                                    
+                                    if ($sendButton->isDisplayed() && $sendButton->isEnabled()) {
+                                        $sendButton->click();
+                                        echo "Mensaje enviado correctamente\n";
+                                        sleep(2);
+                                    }
+                                } catch (Exception $e) {
+                                    echo "No se encontró el botón de enviar: " . $e->getMessage() . "\n";
+                                }
+                                
+                            } else {
+                                echo "Textarea deshabilitado o no disponible, omitiendo envío de mensaje\n";
+                                echo "Procediendo directamente a la tipificación...\n";
+                            }
+                            
+                        } catch (Exception $e) {
+                            echo "Error verificando textarea: " . $e->getMessage() . "\n";
+                            echo "Continuando con tipificación...\n";
+                        }
+
+                        // ==========================================
+                        // SECCIÓN: APERTURA DEL PANEL DE TIPIFICACIÓN
+                        // ==========================================
+                        
+                        try {
+                            $menuTipifications = $driver->findElement(
+                                WebDriverBy::xpath("//lightning-primitive-icon[@variant='bare']")
+                            );
+                            if ($menuTipifications->isDisplayed()) {
+                                $menuTipifications->click();
+                                echo "Panel de tipificacion abierto\n";
+                                sleep(2);
+                            }
+                        } catch (Exception $e) {
+                            echo "No se encontró el icono de tipificación: " . $e->getMessage() . "\n";
+                        }
+
+                        // ==========================================
+                        // SECCIÓN: SELECCIÓN DEL ESTADO
+                        // ==========================================
+                        
+                        try {
+                            $newStatus = $driver->findElement(
+                                WebDriverBy::xpath("//a[@role='combobox'][@aria-label='select']")
+                            );
+                            if ($newStatus->isDisplayed()) {
+                                $newStatus->click();
+                                echo "Combobox de estado abierto\n";
+                                sleep(2);
+                            }
+                        } catch (Exception $e) {
+                            echo "No se encontró el campo de tipificación de estado: " . $e->getMessage() . "\n";
+                        }
+
+                        try {
+                            $opcionResuelto = $driver->findElement(
+                                WebDriverBy::xpath("//a[@role='option'][@title='Resuelto']")
+                            );
+                            if ($opcionResuelto->isDisplayed()) {
+                                $opcionResuelto->click();
+                                echo "Estado 'Resuelto' seleccionado\n";
+                                sleep(2);
+                            }
+                        } catch (Exception $e) {
+                            echo "No se encontró la opción 'Resuelto': " . $e->getMessage() . "\n";
+                        }
+
+                        // ==========================================
+                        // SECCIÓN: ASIGNACIÓN DEL ASUNTO
+                        // ==========================================
+                        
+                        try {
+                            $asuntoInput = $driver->findElement(
+                                WebDriverBy::xpath("//input[@type='text' and @maxlength='255']")
+                            );
+                            
+                            if ($asuntoInput->isDisplayed()) {
+                                $asuntoInput->click();
+                                sleep(1);
+                                $asuntoInput->clear();
+                                $asuntoInput->sendKeys($mensajesData[0]['Asunto']);
+                                echo "Asunto ingresado\n";
+                                sleep(2);
+                            }
+                        } catch (Exception $e) {
+                            echo "No se encontró el campo de tipificación del asunto: " . $e->getMessage() . "\n";
+                        }
+
+                        // ==========================================
+                        // SECCIÓN: ASIGNACIÓN DE LA DESCRIPCIÓN
+                        // ==========================================
+                        
+                        try {
+                            $newDescription = $driver->findElement(
+                                WebDriverBy::xpath("//textarea[@role='textbox' and @maxlength='32000']")
+                            );
+                            
+                            if ($newDescription->isDisplayed()) {
+                                $newDescription->click();
+                                sleep(1);
+                                $newDescription->clear();
+                                $newDescription->sendKeys($mensajesData[0]['Descripcion']);
+                                echo "Descripcion ingresada\n";
+                                sleep(2);
+                            }
+                        } catch (Exception $e) {
+                            echo "No se encontró el campo de tipificación de la descripción: " . $e->getMessage() . "\n";
+                        }
+
+                        // ==========================================
+                        // SECCIÓN: GUARDAR LA TIPIFICACIÓN
+                        // ==========================================
+                        
+                        try {
+                            $saveButton = $driver->findElement(
+                                WebDriverBy::xpath("//span[@class='label bBody' and contains(text(), 'Guardar')]")
+                            );
+                            
+                            if ($saveButton->isDisplayed()) {
+                                $saveButton->click();
+                                echo "Tipificación guardada correctamente\n";
+                                sleep(2);
+                            }
+                        } catch (Exception $e) {
+                            echo "No se encontró el botón Guardar: " . $e->getMessage() . "\n";
+                        }
+                        
+                        echo "Chat procesado completamente. Buscando siguiente chat...\n";
+                        sleep(3);
+                    }
+                
+                } catch (NoSuchElementException $e) {
+                    // No hay chats disponibles en este momento
+                    echo "Sin chats disponibles, esperando... (" . date('H:i:s') . ")\n";
+                    sleep($waitInterval);
                     
-                    if ($sendButton->isDisplayed() && $sendButton->isEnabled()) {
-                        $sendButton->click();
-                        echo "Mensaje enviado correctamente\n";
-                        sleep(2);
-                    }
                 } catch (Exception $e) {
-                    echo "No se encontró el botón de enviar: " . $e->getMessage() . "\n";
+                    // Capturar cualquier otro error inesperado
+                    echo "Error inesperado: " . $e->getMessage() . "\n";
+                    sleep($waitInterval);
                 }
-
-                // ==========================================
-                // SECCIÓN: APERTURA DEL PANEL DE TIPIFICACIÓN
-                // ==========================================
-                
-                try {
-                    $menuTipifications = $driver->findElement(
-                        WebDriverBy::xpath("//lightning-primitive-icon[@variant='bare']")
-                    );
-                    if ($menuTipifications->isDisplayed()) {
-                        $menuTipifications->click();
-                        sleep(2);
-                    }
-                } catch (Exception $e) {
-                    echo "No se encontró el campo de tipificación de estado: " . $e->getMessage() . "\n";
-                }
-
-                // ==========================================
-                // SECCIÓN: SELECCIÓN DEL ESTADO
-                // ==========================================
-                
-                try {
-                    $newStatus = $driver->findElement(
-                        WebDriverBy::xpath("//a[@role='combobox'][@aria-label='select']")
-                    );
-                    if ($newStatus->isDisplayed()) {
-                        $newStatus->click();
-                        sleep(2);
-                    }
-                } catch (Exception $e) {
-                    echo "No se encontró el campo de tipificación de estado: " . $e->getMessage() . "\n";
-                }
-
-                try {
-                    $opcionResuelto = $driver->findElement(
-                        WebDriverBy::xpath("//a[@role='option'][@title='Resuelto']")
-                    );
-                    if ($opcionResuelto->isDisplayed()) {
-                        $opcionResuelto->click();
-                        sleep(2);
-                        echo "Estado 'Resuelto' seleccionado\n";
-                    }
-                } catch (Exception $e) {
-                    echo "No se encontró la opción 'Resuelto': " . $e->getMessage() . "\n";
-                }
-
-                // ==========================================
-                // SECCIÓN: ASIGNACIÓN DEL ASUNTO
-                // ==========================================
-                
-                try {
-                    $asuntoInput = $driver->findElement(
-                        WebDriverBy::xpath("//input[@aria-labelledby='4171:0-label']")
-                    );
-                    
-                    if ($asuntoInput->isDisplayed()) {
-                        $asuntoInput->click();
-                        sleep(1);
-                        $asuntoInput->clear();
-                        $asuntoInput->sendKeys($mensajesData[0]['Asunto']);
-                        sleep(2);
-                    }
-                } catch (Exception $e) {
-                    echo "No se encontró el campo de tipificación del asunto: " . $e->getMessage() . "\n";
-                }
-
-                // ==========================================
-                // SECCIÓN: ASIGNACIÓN DE LA DESCRIPCIÓN
-                // ==========================================
-                
-                try {
-                    $newDescription = $driver->findElement(
-                        WebDriverBy::xpath("//textarea[@role='textbox' and @maxlength='32000']")
-                    );
-                    
-                    if ($newDescription->isDisplayed()) {
-                        $newDescription->click();
-                        sleep(1);
-                        $newDescription->clear();
-                        $newDescription->sendKeys($mensajesData[0]['Descripcion']);
-                        sleep(2);
-                    }
-                } catch (Exception $e) {
-                    echo "No se encontró el campo de tipificación de la descripción: " . $e->getMessage() . "\n";
-                }
-
-                // ==========================================
-                // SECCIÓN: GUARDAR LA TIPIFICACIÓN
-                // ==========================================
-                
-                try {
-                    $saveButton = $driver->findElement(
-                        WebDriverBy::xpath("//span[@class='label bBody' and contains(text(), 'Guardar')]")
-                    );
-                    
-                    if ($saveButton->isDisplayed()) {
-                        $saveButton->click();
-                        sleep(2);
-                        echo "Tipificación guardada correctamente\n";
-                    }
-                } catch (Exception $e) {
-                    echo "No se encontró el botón Guardar: " . $e->getMessage() . "\n";
-                }
-                
-                echo "✅ Chat procesado completamente. Buscando siguiente chat...\n";
-                sleep(3);
             }
-        
-        } catch (NoSuchElementException $e) {
-            // No hay chats disponibles en este momento
-            echo "⏳ Sin chats disponibles, esperando... (" . date('H:i:s') . ")\n";
-            sleep($waitInterval);
-            
+
+        } catch (TimeoutException $e) {
+            echo "Error: Tiempo excedido - " . $e->getMessage() . "\n";
+            if (isset($driver)) {
+                $driver->quit();
+            }
         } catch (Exception $e) {
-            // Capturar cualquier otro error inesperado
-            echo "❌ Error inesperado: " . $e->getMessage() . "\n";
-            sleep($waitInterval);
+            echo "Error general: " . $e->getMessage() . "\n";
+            if (isset($driver)) {
+                $driver->quit();
+            }
         }
-    }
-
-            } catch (TimeoutException | NoSuchElementException $e) {
-                
-                echo "<script>alert('Error: Tiempo excedido');</script>";
-                $driver->quit();
-                
-            }finally {
-
-                $driver->quit();
-
-            }    
-
+        
+        // Nota: El driver NO se cierra aquí para mantener el bucle activo
+        // Si necesitas cerrar el navegador, presiona Ctrl+C en la terminal
     } 
-    
 }
 ?>
 
@@ -334,12 +426,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     <div>
                         <img src="View/images/icons/email.png" alt="Icono de correo electrónico">
-                        <input type="text" id="validationCustomUsername" name="username" placeholder="Usuario_Salesforce" value="sergio.peraltab@etb.com.co" required>
+                        <input type="text" id="validationCustomUsername" name="username" placeholder="Usuario_Salesforce" value="maria.martinb.pr@etb.com.co" required>
                     </div>
 
                     <div>
                         <img src="View/images/icons/pass.png" alt="Icono de contraseña">
-                        <input type="password" id="dz-password" name="password" placeholder="Contraseña_Salesforce" value="Colombia27" required>
+                        <input type="password" id="dz-password" name="password" placeholder="Contraseña_Salesforce" value="Colombia2025" required>
                     </div>
 
                     <div class="buttons-act">
